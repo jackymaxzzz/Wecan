@@ -70,9 +70,24 @@ async def capture_content():
             data = json.loads(response)
             print("\n页面标题响应:", data)
             
-            # 获取页面URL
+            # 获取页面URL用于命名文件
             await ws.send(json.dumps({
                 "id": 2,
+                "method": "Runtime.evaluate",
+                "params": {
+                    "expression": "window.location.hostname || window.location.href.split('/')[2]"
+                }
+            }))
+            
+            response = await ws.recv()
+            data = json.loads(response)
+            url_hostname = data.get('result', {}).get('result', {}).get('value', 'unknown')
+            # 清理URL，使其适合作为文件名
+            url_hostname = ''.join(c if c.isalnum() or c in '-_.' else '_' for c in url_hostname)
+            
+            # 获取页面URL
+            await ws.send(json.dumps({
+                "id": 3,
                 "method": "Runtime.evaluate",
                 "params": {
                     "expression": "window.location.href"
@@ -85,7 +100,7 @@ async def capture_content():
             
             # 获取简单的页面信息
             await ws.send(json.dumps({
-                "id": 3,
+                "id": 4,
                 "method": "Runtime.evaluate",
                 "params": {
                     "expression": "JSON.stringify({links: document.links.length, images: document.images.length, forms: document.forms.length})"
@@ -114,7 +129,7 @@ async def capture_content():
             # 步骤1: 获取完整页面尺寸
             print("\n获取页面完整尺寸...")
             await ws.send(json.dumps({
-                "id": 4,
+                "id": 5,
                 "method": "Runtime.evaluate",
                 "params": {
                     "expression": "JSON.stringify({width: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth), height: Math.max(document.documentElement.scrollHeight, document.body.scrollHeight)})"
@@ -145,7 +160,7 @@ async def capture_content():
             # 步骤2: 设置视口尺寸为页面尺寸
             print("\n设置视口尺寸...")
             await ws.send(json.dumps({
-                "id": 5,
+                "id": 6,
                 "method": "Emulation.setDeviceMetricsOverride",
                 "params": {
                     "width": page_width,
@@ -161,7 +176,7 @@ async def capture_content():
             # 步骤3: 分片捕获完整页面，避免消息过大
             # 创建时间戳文件夹存储所有分片
             timestamp = int(time.time())
-            fragment_dir = os.path.join(screenshots_dir, f"full_page_{timestamp}")
+            fragment_dir = os.path.join(screenshots_dir, f"{url_hostname}_{timestamp}")
             os.makedirs(fragment_dir, exist_ok=True)
             
             # 确定分片大小和数量
@@ -182,7 +197,7 @@ async def capture_content():
                 
                 # 使用较低质量进行分片截图
                 await ws.send(json.dumps({
-                    "id": 6 + i,
+                    "id": 7 + i,
                     "method": "Page.captureScreenshot",
                     "params": {
                         "format": "jpeg",
@@ -245,7 +260,7 @@ async def capture_content():
                             y_offset += img.height
                     
                     # 保存完整图像（可以降低质量以减小文件大小）
-                    merged_filename = os.path.join(screenshots_dir, f"full_page_{timestamp}.jpg")
+                    merged_filename = os.path.join(screenshots_dir, f"{url_hostname}_{timestamp}.jpg")
                     full_image.save(merged_filename, 'JPEG', quality=85)
                     
                     print(f"\n已将所有分片合并为一个完整的截图: {merged_filename}")
@@ -283,7 +298,7 @@ async def capture_content():
             
             # 第一步：获取HTML总长度
             await ws.send(json.dumps({
-                "id": 3,
+                "id": 101,
                 "method": "Runtime.evaluate",
                 "params": {
                     "expression": "document.documentElement.outerHTML.length"
@@ -312,7 +327,7 @@ async def capture_content():
                     
                     # 直接从document.documentElement.outerHTML获取指定范围的内容
                     await ws.send(json.dumps({
-                        "id": 5 + i,
+                        "id": 102 + i,
                         "method": "Runtime.evaluate",
                         "params": {
                             "expression": f"document.documentElement.outerHTML.substring({start_index}, {end_index})"
@@ -332,7 +347,7 @@ async def capture_content():
                 # 过滤掉样式代码
                 print("\n正在过滤样式代码...")
                 await ws.send(json.dumps({
-                    "id": 200,
+                    "id": 300,
                     "method": "Runtime.evaluate",
                     "params": {
                         "expression": """
@@ -413,7 +428,24 @@ async def capture_content():
                 html_dir = "html_source"
                 os.makedirs(html_dir, exist_ok=True)
                 timestamp = int(time.time())
-                html_filename = os.path.join(html_dir, f"page_source_{timestamp}.html")
+                
+                # 获取页面URL并转换为有效的文件名
+                await ws.send(json.dumps({
+                    "id": 301,
+                    "method": "Runtime.evaluate",
+                    "params": {
+                        "expression": "window.location.hostname || window.location.href.split('/')[2]"
+                    }
+                }))
+                
+                url_response = await ws.recv()
+                url_data = json.loads(url_response)
+                url_hostname = url_data.get('result', {}).get('result', {}).get('value', 'unknown')
+                
+                # 提取主机名并清理不适合文件名的字符
+                url_hostname = ''.join(c if c.isalnum() or c in '-_.' else '_' for c in url_hostname)
+                
+                html_filename = os.path.join(html_dir, f"{url_hostname}_{timestamp}.html")
                 with open(html_filename, "w", encoding="utf-8") as f:
                     f.write(full_html)
                 
@@ -434,7 +466,7 @@ async def capture_content():
                 # 执行JavaScript从页面中直接提取热搜信息
                 print("\n尝试提取热搜信息...")
                 await ws.send(json.dumps({
-                    "id": 100,
+                    "id": 400,
                     "method": "Runtime.evaluate",
                     "params": {
                         "expression": """
@@ -476,11 +508,11 @@ async def capture_content():
                 hot_data = json.loads(hot_response)
                 
                 if hot_data.get('result', {}).get('result', {}).get('type') == 'object':
-                    print("热搜信息需要进一步处理，尝试另一种方法...")
+                    # print("热搜信息需要进一步处理，尝试另一种方法...")
                     
                     # 尝试另一种方法获取热搜
                     await ws.send(json.dumps({
-                        "id": 101,
+                        "id": 401,
                         "method": "Runtime.evaluate",
                         "params": {
                             "expression": """
@@ -528,18 +560,18 @@ async def capture_content():
                     hot_text_data = json.loads(hot_text_response)
                     hot_search_text = hot_text_data.get('result', {}).get('result', {}).get('value', '未找到热搜信息')
                     
-                    print("\n可能的热搜信息:")
-                    print("-" * 50)
-                    print(hot_search_text)
-                    print("-" * 50)
-                else:
-                    hot_searches = hot_data.get('result', {}).get('result', {}).get('value', [])
+                #     print("\n可能的热搜信息:")
+                #     print("-" * 50)
+                #     print(hot_search_text)
+                #     print("-" * 50)
+                # else:
+                #     hot_searches = hot_data.get('result', {}).get('result', {}).get('value', [])
                     
-                    print("\n找到的热搜信息:")
-                    print("-" * 50)
-                    for i, item in enumerate(hot_searches):
-                        print(f"{i+1}. {item}")
-                    print("-" * 50)
+                    # print("\n找到的热搜信息:")
+                    # print("-" * 50)
+                    # for i, item in enumerate(hot_searches):
+                    #     print(f"{i+1}. {item}")
+                    # print("-" * 50)
                 
             except Exception as e:
                 print(f"获取HTML时出错: {e}")
